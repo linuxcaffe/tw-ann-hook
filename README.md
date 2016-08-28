@@ -1,7 +1,14 @@
 # tw-ann-hook
 A taskwarrior hook that enables automatic and multi-line annotations.
 
-STATUS: Imaginary, this is a stub of an idea.
+STATUS: Imaginary, the "hook" part is not yet implemented, but twan.sh works well.
+
+To use twan.sh, make the script executable (chmod +x ../path/to/twan.sh) and then follow with task ID to annotate;
+
+```
+$ twan.sh 142
+```
+edit the task in vim, and line-breaks, tabs etc are preserved
 
 ### What would tw-ann-hook do?
 
