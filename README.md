@@ -16,7 +16,7 @@ If you would rather create your annotation using your $EDITOR, you can use the t
 ```
 $ twan.sh 142
 ```
-edit the annotation in vim, and on saving and closing, line-breaks, tabs etc are preserved
+write the annotation, and on saving and closing, line-breaks, tabs etc are preserved
 
 ### What would tw-ann-hook do?
 
