@@ -12,7 +12,8 @@ if [[ "$ID" != [0-9]* ]]; then
     exit 1
 fi
 FILE="`mktemp`"
-vi "$FILE"
+EDITOR="${EDITOR:-vi}"
+$EDITOR "$FILE"
 task $ID annotate "`cat $FILE`"
 rm "$FILE"
 exit 0
