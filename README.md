@@ -3,7 +3,15 @@ _A taskwarrior hook that enables automatic and multi-line annotations._
 
 *STATUS: the "hook" part is not yet implemented, but twan.sh script works well.*
 
-To use twan.sh, make the script executable (chmod +x ../path/to/twan.sh) and then follow with task ID to annotate;
+It's possible to create milti-line annotations "out of the box", that is to say, without using any external scripts or your $EDITOR, by starting and ending the annotation with a quote, like this;
+
+```
+$ task 142 annotate 'the first line
+the second line, and
+the third line'
+```
+
+If you would rather create your annotation using your $EDITOR, you can use the twan.sh script. First, make the script executable (chmod +x ../path/to/twan.sh) and then follow with task ID to annotate;
 
 ```
 $ twan.sh 142
