@@ -14,7 +14,7 @@ fi
 FILE="`mktemp`"
 EDITOR="${EDITOR:-vi}"
 $EDITOR "$FILE"
-task $ID annotate "`cat $FILE`"
+task $ID annotate "`echo -n "\n"; cat $FILE`"
 rm "$FILE"
 exit 0
 
