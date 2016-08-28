@@ -8,7 +8,7 @@ To use twan.sh, make the script executable (chmod +x ../path/to/twan.sh) and the
 ```
 $ twan.sh 142
 ```
-edit the task in vim, and line-breaks, tabs etc are preserved
+edit the annotation in vim, and on saving and closing, ine-breaks, tabs etc are preserved
 
 ### What would tw-ann-hook do?
 
