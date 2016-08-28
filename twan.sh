@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/sh
 #
 # twan.sh
 # Copyright (C) 2016 djp <djp@cutter>
@@ -7,12 +7,14 @@
 #
 
 ID=$*
-if [[ "$ID" != [0-9]* ]]; then 
+if ! echo "$ID" | grep -q '[0-9]\+'; then
     echo "  ERROR: twan command must be followed by a single task ID"
     exit 1
 fi
-vi /tmp/tw-annot-$ID.tmp
-task $ID annotate "`cat /tmp/tw-annot-$ID.tmp`"
-rm /tmp/tw-annot-$ID.tmp
+FILE="`mktemp`"
+EDITOR="${EDITOR:-vi}"
+$EDITOR "$FILE"
+task $ID annotate "`cat $FILE`"
+rm "$FILE"
 exit 0
 
