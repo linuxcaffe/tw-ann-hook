@@ -22,11 +22,11 @@ write the annotation, and on saving and closing, line-breaks, tabs etc are prese
 
 Currently, to add an annotation in taskwarrior, issue the command
 ```
-task 142 annot This is the text of the annotation
+$ task 142 annot This is the text of the annotation
 ```
 but if you just use 
 ```
-task 142 annot
+$ task 142 ann
 ```
 you get error message;
 ```
