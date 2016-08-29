@@ -21,13 +21,17 @@ write the annotation, and on saving and closing, line-breaks, tabs etc are prese
 ### What would tw-ann-hook do?
 
 Currently, to add an annotation in taskwarrior, issue the command
-
-   task 142 annot This is the text of the annotation
-   
-but if you just use 'task 142 annot', you get error message;
-
-   Additional text must be provided.
-
+```
+task 142 annot This is the text of the annotation
+```
+but if you just use 
+```
+task 142 annot
+```
+you get error message;
+```
+Additional text must be provided.
+```
 Instead of that error message, this hook would start your editor
 (as long as it's vim) and open a buffer as annotation text. 
 On saving the file, the line-breaks and tab-chars are translated to
