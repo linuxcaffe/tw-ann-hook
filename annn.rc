@@ -1,0 +1,15 @@
+# annn.rc - Configuration for annn annotation hook
+# Include in .taskrc: include ~/.task/config/annn.rc
+
+# Tag that triggers auto-annotation on complete/delete
+# Tasks with this tag will prompt for an annotation when completed or deleted
+annn.tag=ann
+
+# Trigger on task completion (yes/no)
+annn.on_complete=yes
+
+# Trigger on task deletion (yes/no)
+annn.on_delete=yes
+
+# Editor override (leave empty to use $EDITOR, defaults to vim)
+annn.editor=

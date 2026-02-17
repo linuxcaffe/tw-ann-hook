@@ -1,0 +1,405 @@
+#!/usr/bin/env bash
+# annn - Annotation helper for Taskwarrior
+# version 0.3.0
+#
+# Usage:
+#   annn <id>        Open $EDITOR for a new annotation
+#   annn <id>.       List all annotations with index numbers
+#   annn <id>.<N>    Edit annotation N in $EDITOR
+#   annn -<id>.<N>   Remove annotation N (with confirmation)
+#   annn <id> .      (space-separated form also works)
+#   annn <id> .<N>
+#
+# Designed for Taskwarrior 2.6.2
+# License: MIT
+
+set -euo pipefail
+
+readonly VERSION="0.3.0"
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly EDITOR="${EDITOR:-vim}"
+
+# Global tmpfile for trap cleanup (avoids "unbound variable" with set -u)
+tmpfile=""
+trap 'rm -f "$tmpfile"' EXIT
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME <id>[.<N>]
+
+  $SCRIPT_NAME <id>         New annotation (opens \$EDITOR)
+  $SCRIPT_NAME <id>.        List annotations
+  $SCRIPT_NAME <id>.<N>     Edit annotation N
+  $SCRIPT_NAME -<id>.<N>    Remove annotation N
+
+  Space-separated form also works:
+  $SCRIPT_NAME <id> .       List annotations
+  $SCRIPT_NAME <id> .<N>    Edit annotation N
+
+Examples:
+  $SCRIPT_NAME 42           Add new annotation to task 42
+  $SCRIPT_NAME 42.          List annotations on task 42
+  $SCRIPT_NAME 42.1         Edit first annotation on task 42
+  $SCRIPT_NAME 42.3         Edit third annotation on task 42
+  $SCRIPT_NAME -42.1        Remove first annotation from task 42
+  $SCRIPT_NAME 42 .1        (same as 42.1)
+  $SCRIPT_NAME pro:bills .  List annotations on filtered tasks
+
+Options:
+  -h, --help       Show this help
+  -v, --version    Show version
+EOF
+    exit 0
+}
+
+die() {
+    echo "[annn] ERROR: $*" >&2
+    exit 1
+}
+
+msg() {
+    echo "[annn] $*"
+}
+
+# ============================================================================
+# Sanitize task description for use in temp filename
+# ============================================================================
+
+sanitize_for_filename() {
+    # Lowercase, replace non-alphanumeric with hyphens, collapse multiples, trim
+    echo "$1" | tr '[:upper:]' '[:lower:]' \
+              | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' \
+              | cut -c1-40
+}
+
+# ============================================================================
+# Make a descriptive temp file for a given task ID
+# ============================================================================
+
+make_tmpfile() {
+    local id="$1"
+    local desc
+    desc=$(task _get "$id.description" 2>/dev/null || echo "")
+    local slug
+    slug=$(sanitize_for_filename "${desc:-task}")
+    tmpfile=$(mktemp "/tmp/annn_${id}_${slug}.XXXXXX.md")
+}
+
+# ============================================================================
+# Get annotation count via DOM
+# ============================================================================
+
+get_annotation_count() {
+    local filter="$1"
+
+    # Get the task ID (resolve filter to single task)
+    local id
+    id=$(task rc.verbose=nothing rc.color=off "$filter" _ids 2>/dev/null | head -1)
+    [[ -z "$id" ]] && die "No task found matching: $filter"
+
+    # Count annotations by probing DOM references
+    local count=0
+    while true; do
+        local next=$(( count + 1 ))
+        local desc
+        desc=$(task _get "$id.annotations.${next}.description" 2>/dev/null) || break
+        [[ -z "$desc" ]] && break
+        count=$next
+    done
+
+    echo "$count"
+}
+
+# ============================================================================
+# Resolve filter to a single task ID
+# ============================================================================
+
+resolve_id() {
+    local filter="$1"
+    local ids
+    ids=$(task rc.verbose=nothing rc.color=off "$filter" _ids 2>/dev/null)
+
+    local count
+    count=$(echo "$ids" | wc -w)
+
+    if [[ "$count" -eq 0 ]]; then
+        die "No task found matching: $filter"
+    elif [[ "$count" -gt 1 ]]; then
+        die "Filter matches multiple tasks ($count). Please narrow to one task."
+    fi
+
+    echo "$ids" | tr -d '[:space:]'
+}
+
+# ============================================================================
+# List annotations
+# ============================================================================
+
+list_annotations() {
+    local id="$1"
+    local count
+    count=$(get_annotation_count "$id")
+
+    if [[ "$count" -eq 0 ]]; then
+        msg "No annotations on task $id"
+        return
+    fi
+
+    # Show task description for context
+    local desc
+    desc=$(task _get "$id.description" 2>/dev/null)
+    echo "Task $id: $desc"
+    echo "---"
+
+    local i=1
+    while [[ $i -le $count ]]; do
+        local ann_desc ann_entry
+        ann_desc=$(task _get "$id.annotations.${i}.description" 2>/dev/null)
+        ann_entry=$(task _get "$id.annotations.${i}.entry" 2>/dev/null)
+
+        # Format the entry date if possible
+        local date_str="$ann_entry"
+        if command -v date &>/dev/null && [[ -n "$ann_entry" ]]; then
+            # Try to format ISO date to readable form
+            date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
+        fi
+
+        printf "  .%-3d [%s]\n" "$i" "$date_str"
+        # Print annotation text, indented, handling multiline
+        echo "$ann_desc" | sed 's/^/       /'
+        echo ""
+        i=$(( i + 1 ))
+    done
+}
+
+# ============================================================================
+# New annotation via editor
+# ============================================================================
+
+new_annotation() {
+    local id="$1"
+    make_tmpfile "$id"
+
+    $EDITOR "$tmpfile"
+
+    # Check if file has content
+    if [[ ! -s "$tmpfile" ]]; then
+        msg "Empty annotation, nothing saved."
+        return
+    fi
+
+    local annot
+    annot="$(cat "$tmpfile")"
+
+    # Save the annotation
+    if task "$id" annotate "$annot"; then
+        msg "Annotation added to task $id"
+    else
+        echo ""
+        msg "Error saving annotation. Your text:"
+        echo "---"
+        cat "$tmpfile"
+        echo "---"
+    fi
+}
+
+# ============================================================================
+# Edit existing annotation
+# ============================================================================
+
+edit_annotation() {
+    local id="$1"
+    local index="$2"
+
+    local count
+    count=$(get_annotation_count "$id")
+
+    if [[ "$count" -eq 0 ]]; then
+        die "No annotations on task $id"
+    fi
+
+    if [[ "$index" -lt 1 || "$index" -gt "$count" ]]; then
+        die "Annotation .$index out of range (task has $count annotation(s))"
+    fi
+
+    # Fetch current annotation text
+    local old_text
+    old_text=$(task _get "$id.annotations.${index}.description" 2>/dev/null)
+
+    if [[ -z "$old_text" ]]; then
+        die "Could not read annotation .$index"
+    fi
+
+    make_tmpfile "$id"
+
+    # Write current text to temp file for editing
+    echo "$old_text" > "$tmpfile"
+
+    $EDITOR "$tmpfile"
+
+    # Check if content changed
+    local new_text
+    new_text=$(cat "$tmpfile")
+
+    if [[ "$new_text" == "$old_text" ]]; then
+        msg "No changes made."
+        return
+    fi
+
+    # Check if emptied
+    if [[ -z "$new_text" ]]; then
+        msg "Annotation emptied — removing it."
+        task "$id" denotate "$old_text"
+        return
+    fi
+
+    # Replace: denotate old, annotate new
+    # Use exact text for denotate to avoid partial matches
+    if task "$id" denotate "$old_text" 2>/dev/null; then
+        local annot
+        annot="$new_text"
+
+        if task "$id" annotate "$annot"; then
+            msg "Annotation .$index updated on task $id"
+        else
+            echo ""
+            msg "Error saving new annotation. Old was removed. Your text:"
+            echo "---"
+            cat "$tmpfile"
+            echo "---"
+        fi
+    else
+        msg "Warning: could not remove old annotation. No changes made."
+    fi
+}
+
+# ============================================================================
+# Remove annotation (with confirmation)
+# ============================================================================
+
+remove_annotation() {
+    local id="$1"
+    local index="$2"
+
+    local count
+    count=$(get_annotation_count "$id")
+
+    if [[ "$count" -eq 0 ]]; then
+        die "No annotations on task $id"
+    fi
+
+    if [[ "$index" -lt 1 || "$index" -gt "$count" ]]; then
+        die "Annotation .$index out of range (task has $count annotation(s))"
+    fi
+
+    # Fetch annotation text
+    local ann_text
+    ann_text=$(task _get "$id.annotations.${index}.description" 2>/dev/null)
+
+    if [[ -z "$ann_text" ]]; then
+        die "Could not read annotation .$index"
+    fi
+
+    # Show task context
+    local desc
+    desc=$(task _get "$id.description" 2>/dev/null)
+    echo "Task $id: $desc"
+    echo "---"
+
+    # Show the annotation to be removed
+    local ann_entry
+    ann_entry=$(task _get "$id.annotations.${index}.entry" 2>/dev/null)
+    local date_str="$ann_entry"
+    if command -v date &>/dev/null && [[ -n "$ann_entry" ]]; then
+        date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
+    fi
+
+    printf "  .%-3d [%s]\n" "$index" "$date_str"
+    echo "$ann_text" | sed 's/^/       /'
+    echo ""
+
+    # Confirm
+    read -rp "Remove this annotation? [y/N]: " response
+    if [[ "${response,,}" != "y" ]]; then
+        msg "Cancelled."
+        return
+    fi
+
+    if task "$id" denotate "$ann_text"; then
+        msg "Annotation .$index removed from task $id"
+    else
+        msg "Error: could not remove annotation .$index"
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+# Handle flags
+case "${1:-}" in
+    -h|--help) usage ;;
+    -v|--version) echo "annn v$VERSION"; exit 0 ;;
+    "") usage ;;
+esac
+
+# Parse arguments
+# Support combined syntax: "42.1", "42.", "-42.1"
+# and space-separated: "42 .1", "42 ."
+arg1="$1"
+shift
+
+remove_mode=false
+
+if [[ $# -eq 0 ]] && [[ "$arg1" =~ ^-([0-9]+)\.([0-9]+)$ ]]; then
+    # Remove: "-42.1"
+    filter="${BASH_REMATCH[1]}"
+    action=".${BASH_REMATCH[2]}"
+    remove_mode=true
+elif [[ $# -eq 0 ]] && [[ "$arg1" =~ ^([0-9]+)(\.([0-9]*))$ ]]; then
+    # Combined: "42." or "42.1"
+    filter="${BASH_REMATCH[1]}"
+    action=".${BASH_REMATCH[3]}"
+else
+    # Two-arg form: "42 .1" or "42 ." or just "42"
+    filter="$arg1"
+    action="${1:-new}"
+fi
+
+# Resolve task ID
+id=$(resolve_id "$filter")
+
+if [[ "$remove_mode" == true ]]; then
+    # Remove annotation
+    index="${action#.}"
+    if ! [[ "$index" =~ ^[0-9]+$ ]]; then
+        die "Invalid annotation index: .$index"
+    fi
+    remove_annotation "$id" "$index"
+else
+    case "$action" in
+        .)
+            # List annotations
+            list_annotations "$id"
+            ;;
+        .*)
+            # Edit annotation N
+            index="${action#.}"
+            if ! [[ "$index" =~ ^[0-9]+$ ]]; then
+                die "Invalid annotation index: .$index"
+            fi
+            edit_annotation "$id" "$index"
+            ;;
+        new)
+            # New annotation
+            new_annotation "$id"
+            ;;
+        *)
+            die "Unknown action: $action (use . or .<N>)"
+            ;;
+    esac
+fi

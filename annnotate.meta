@@ -1,0 +1,17 @@
+# annnotate.meta
+# Use annn 42.1 to open your $EDITOR (vim) to edit first annotation, annn -42.1 to delete it
+
+name=annnotate
+version=0.4.0
+type=hook
+description=Use annn 42.1 to open your $EDITOR (vim) to edit first annotation, annn -42.1 to delete it
+repo=https://github.com/linuxcaffe/tw-ann-hook
+base_url=https://raw.githubusercontent.com/linuxcaffe/tw-ann-hook/master
+files=on-exit_annn.py:hook,annn:script,annn.rc:config,README.md:doc
+tags=annotate, denotate, hook
+
+checksums=3fa558a9f06d4ff5aa8d3a074eaa7f10d1fd2afc1bdb5e90d0340b7ca801902e,b80c5f9bcfc13ea1a4e2240e07de7d16d40999e9c9df8d339fe24fc4b1b6f498,2dc748355554288d6a02a57d6fa3b80ccf26adc11eab00ecbc27f888ae59591a,77e940d17c511e67771808227efd3740b24e9fd3aa92e897c29e8afdcb2ca10d
+
+author=Designed by linuxcaffe, implemented by Claude Sonnet 4.5
+license=MIT
+requires_taskwarrior=2.6.0
