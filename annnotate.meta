@@ -2,15 +2,15 @@
 # Use annn 42.1 to open your $EDITOR (vim) to edit first annotation, annn -42.1 to delete it
 
 name=annnotate
-version=0.4.0
+version=0.5.0
 type=hook
 description=Use annn 42.1 to open your $EDITOR (vim) to edit first annotation, annn -42.1 to delete it
-repo=https://github.com/linuxcaffe/tw-ann-hook
-base_url=https://raw.githubusercontent.com/linuxcaffe/tw-ann-hook/master
+repo=https://github.com/linuxcaffe/annnotate
+base_url=https://raw.githubusercontent.com/linuxcaffe/annnotate/master
 files=on-exit_annn.py:hook,annn:script,annn.rc:config,README.md:doc
 tags=annotate, denotate, hook
 
-checksums=3fa558a9f06d4ff5aa8d3a074eaa7f10d1fd2afc1bdb5e90d0340b7ca801902e,b80c5f9bcfc13ea1a4e2240e07de7d16d40999e9c9df8d339fe24fc4b1b6f498,2dc748355554288d6a02a57d6fa3b80ccf26adc11eab00ecbc27f888ae59591a,77e940d17c511e67771808227efd3740b24e9fd3aa92e897c29e8afdcb2ca10d
+checksums=fda083e8e89cbfb3f28dce070c0fb591c4d30357f182359d799cf99350646683,c833718ae39bc8b2cc02ca0c010a4dac7957646e6f8f8f0940edd0d68acec7ca,ff38fdcefff26da88720476244afcaf0286e612a19d2ee9755dc17544ee11e4d,586fee0955370dbd928385761286c6c230afc80104fac66a7e792b24ab1e1079
 
 author=Designed by linuxcaffe, implemented by Claude Sonnet 4.5
 license=MIT

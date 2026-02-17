@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 on-exit_annn.py - Auto-annotation hook for Taskwarrior 2.6.2
-Version: 0.1.0
+Version: 0.5.0
 
 When a task tagged with +ann (configurable) is completed or deleted,
 opens $EDITOR for the user to write an annotation. The annotation is

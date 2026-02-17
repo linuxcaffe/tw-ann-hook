@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # annn - Annotation helper for Taskwarrior
-# version 0.3.0
+# version 0.5.0
 #
 # Usage:
 #   annn <id>        Open $EDITOR for a new annotation

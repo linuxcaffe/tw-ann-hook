@@ -214,6 +214,7 @@ these edge cases gracefully.
 
 ## Metadata
 
+- Version 0.5.0
 - License: MIT
 - Language: Bash (CLI), Python (hook)
 - Interface: CLI + `$EDITOR`

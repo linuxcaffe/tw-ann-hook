@@ -1,5 +1,6 @@
 # annn.rc - Configuration for annn annotation hook
 # Include in .taskrc: include ~/.task/config/annn.rc
+# version 0.5.0
 
 # Tag that triggers auto-annotation on complete/delete
 # Tasks with this tag will prompt for an annotation when completed or deleted
