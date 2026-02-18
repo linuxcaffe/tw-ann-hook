@@ -12,5 +12,5 @@ annn.on_complete=yes
 # Trigger on task deletion (yes/no)
 annn.on_delete=yes
 
-# Editor override (leave empty to use $EDITOR, defaults to vim)
+# Editor override (leave empty to use EDITOR, defaults to vim)
 annn.editor=

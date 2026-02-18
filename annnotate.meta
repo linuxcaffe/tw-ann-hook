@@ -10,9 +10,9 @@ base_url=https://raw.githubusercontent.com/linuxcaffe/tw-ann-hook/master
 files=on-exit_annn.py:hook,annn:script,annn.rc:config,README.md:doc
 tags=annotation, list, edit, wrapper
 
-checksums=fda083e8e89cbfb3f28dce070c0fb591c4d30357f182359d799cf99350646683,6b70540b0408475a509f2be523ac4b81946012ee178dae0ac0218a23fa439be0,ff38fdcefff26da88720476244afcaf0286e612a19d2ee9755dc17544ee11e4d,586fee0955370dbd928385761286c6c230afc80104fac66a7e792b24ab1e1079
+checksums=fda083e8e89cbfb3f28dce070c0fb591c4d30357f182359d799cf99350646683,6b70540b0408475a509f2be523ac4b81946012ee178dae0ac0218a23fa439be0,eff5962e4a5a5b7e731d052cbea1108f7e9b93023932c5c39adc28c1d31699d6,586fee0955370dbd928385761286c6c230afc80104fac66a7e792b24ab1e1079
 
-author=Designed by linuxcaffe, implemented by Claude Sonned 4.5
+author=Designed by linuxcaffe, implemented by Claude Sonnet 4.5
 license=MIT
 requires_taskwarrior=2.6.0
 
