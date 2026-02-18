@@ -118,7 +118,7 @@ install() {
     WRAPPERS_FILE="${HOME}/.task/config/.tw_wrappers"
     mkdir -p "$(dirname "$WRAPPERS_FILE")"
     if ! grep -q "^ann|" "$WRAPPERS_FILE" 2>/dev/null; then
-        echo "ann|annn|Open your $EDITOR with annotations, add, list, remove them with easy syntax" >> "$WRAPPERS_FILE"
+        echo "ann|annn|Opens annotations in your editor, add, list or remove them with easy syntax" >> "$WRAPPERS_FILE"
         tw_msg "Registered wrapper: ann -> annn"
         debug_msg "Registered wrapper in .tw_wrappers" 2
     else

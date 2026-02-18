@@ -1,10 +1,10 @@
 # annnotate.meta
-# Open your $EDITOR with annotations, add, list, remove them with easy syntax
+# Opens annotations in your editor, add, list or remove them with easy syntax
 
 name=annnotate
 version=0.5.0
 type=wrapper
-description=Open your $EDITOR with annotations, add, list, remove them with easy syntax
+description=Opens annotations in your editor, add, list or remove them with easy syntax
 repo=https://github.com/linuxcaffe/tw-ann-hook
 base_url=https://raw.githubusercontent.com/linuxcaffe/tw-ann-hook/master
 files=on-exit_annn.py:hook,annn:script,annn.rc:config,README.md:doc
