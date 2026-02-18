@@ -12,10 +12,12 @@ task completion or deletion.
 ## TL;DR
 
 - Create and edit annotations in your editor, not inline
+- Pipe annotations directly: `echo "quick note" | annn 42`
 - List annotations with numbered indexes
 - Remove annotations with confirmation
 - Compact dot-syntax: `annn 42.1` to edit, `annn -42.1` to remove
 - Optional hook: auto-prompt for annotation when completing or deleting `+ann` tasks
+- Works standalone or as a tw wrapper: `tw 42 ann.1`
 - Designed for Taskwarrior 2.6.2
 
 ---
@@ -33,12 +35,13 @@ document why a task was completed or deleted.
 
 ---
 
-## Two components
+## Three components
 
 ### 1. `annn` — CLI annotation manager
 
 A standalone bash script for creating, listing, editing, and removing
-annotations by index.
+annotations by index. Supports both interactive (editor) and non-interactive
+(pipe) input.
 
 ### 2. `on-exit_annn.py` — Auto-annotation hook
 
@@ -46,20 +49,40 @@ A Taskwarrior on-exit hook that watches for tasks tagged `+ann`. When one is
 completed or deleted, it opens your editor for a final annotation — a closing
 note, a reason for deletion, or whatever context you want to preserve.
 
-Each component works independently. Use one or both.
+### 3. tw wrapper integration
+
+When installed via awesome-taskwarrior, `annn` registers as a tw wrapper,
+enabling `tw 42 ann.1` syntax. tw dispatches to `annn` automatically — no
+changes to tw required.
+
+Each component works independently. Use one, two, or all three.
 
 ---
 
 ## CLI usage
 
 ```
-annn <id>         New annotation (opens $EDITOR)
-annn <id>.        List annotations with index numbers
-annn <id>.<N>     Edit annotation N
-annn -<id>.<N>    Remove annotation N (with confirmation)
+annn <id>                New annotation (opens $EDITOR)
+annn <id>.               List annotations with index numbers
+annn <id>.<N>            Edit annotation N
+annn -<id>.<N>           Remove annotation N (with confirmation)
+echo "text" | annn <id>  Annotate from pipe (no editor)
 ```
 
 Space-separated form also works: `annn 42 .1` is the same as `annn 42.1`.
+
+When opening the editor, `annn` shows the task context with annotation count:
+
+```
+[annn] Task 42: assemble realed expenses (3 annotations)
+```
+
+The editor opens a descriptively named temp file so you always know what
+you're annotating:
+
+```
+/tmp/annn_42_assemble-realed-expenses.Xk9f3m.md
+```
 
 ---
 
@@ -69,8 +92,23 @@ Add a new annotation to task 42:
 
 ```bash
 annn 42
+# [annn] Task 42: assemble realed expenses (2 annotations)
 # Editor opens — write your annotation, save, quit
 # [annn] Annotation added to task 42
+```
+
+Pipe a quick note without opening the editor:
+
+```bash
+echo "called vendor, waiting for callback" | annn 42
+# [annn] Annotation added to task 42
+```
+
+Pipe command output:
+
+```bash
+git log --oneline -1 | annn 42
+date "+Started %Y-%m-%d %H:%M" | annn 42
 ```
 
 List annotations on task 42:
@@ -90,6 +128,7 @@ Edit the first annotation:
 
 ```bash
 annn 42.1
+# [annn] Task 42: assemble realed expenses (2 annotations)
 # Editor opens with current text — edit, save, quit
 # [annn] Annotation .1 updated on task 42
 ```
@@ -106,6 +145,24 @@ annn -42.2
 # Remove this annotation? [y/N]: y
 # [annn] Annotation .2 removed from task 42
 ```
+
+---
+
+## tw wrapper usage
+
+When installed via awesome-taskwarrior, all `annn` commands are available
+through tw:
+
+```bash
+tw 42 ann          # new annotation
+tw 42 ann.         # list annotations
+tw 42 ann.1        # edit annotation 1
+tw 42 -ann.1       # remove annotation 1
+echo "note" | tw 42 ann   # pipe input
+```
+
+tw detects the `ann` keyword, translates the arguments, and dispatches to
+`annn`. The wrapper registration happens automatically during installation.
 
 ---
 
@@ -176,11 +233,13 @@ cp annn.rc ~/.task/config/
 echo 'include ~/.task/config/annn.rc' >> ~/.taskrc
 ```
 
-### Via awesome-taskwarrior
+### Via awesome-taskwarrior (recommended)
 
 ```bash
 tw --install annn
 ```
+
+This installs all components and registers the tw wrapper automatically.
 
 **Requirements:**
 - Taskwarrior 2.6.2
@@ -214,7 +273,7 @@ these edge cases gracefully.
 
 ## Metadata
 
-- Version 0.5.0
+- Version: 0.5.0
 - License: MIT
 - Language: Bash (CLI), Python (hook)
 - Interface: CLI + `$EDITOR`
