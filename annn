@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 # annn - Annotation helper for Taskwarrior
-# version 0.5.0
+# version 0.4.0
 #
 # Usage:
-#   annn <id>        Open $EDITOR for a new annotation
-#   annn <id>.       List all annotations with index numbers
-#   annn <id>.<N>    Edit annotation N in $EDITOR
-#   annn -<id>.<N>   Remove annotation N (with confirmation)
-#   annn <id> .      (space-separated form also works)
-#   annn <id> .<N>
+#   annn <id>                Open $EDITOR for a new annotation
+#   annn <id>.               List all annotations with index numbers
+#   annn <id>.<N>            Edit annotation N in $EDITOR
+#   annn -<id>.<N>           Remove annotation N (with confirmation)
+#   echo "text" | annn <id>  Annotate directly from pipe (no editor)
 #
 # Designed for Taskwarrior 2.6.2
 # License: MIT
 
 set -euo pipefail
 
-readonly VERSION="0.3.0"
+readonly VERSION="0.4.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly EDITOR="${EDITOR:-vim}"
 
@@ -31,23 +30,26 @@ usage() {
     cat <<EOF
 Usage: $SCRIPT_NAME <id>[.<N>]
 
-  $SCRIPT_NAME <id>         New annotation (opens \$EDITOR)
-  $SCRIPT_NAME <id>.        List annotations
-  $SCRIPT_NAME <id>.<N>     Edit annotation N
-  $SCRIPT_NAME -<id>.<N>    Remove annotation N
+  $SCRIPT_NAME <id>                New annotation (opens \$EDITOR)
+  $SCRIPT_NAME <id>.               List annotations
+  $SCRIPT_NAME <id>.<N>            Edit annotation N
+  $SCRIPT_NAME -<id>.<N>           Remove annotation N
+  echo "text" | $SCRIPT_NAME <id>  Annotate from pipe (no editor)
 
   Space-separated form also works:
-  $SCRIPT_NAME <id> .       List annotations
-  $SCRIPT_NAME <id> .<N>    Edit annotation N
+  $SCRIPT_NAME <id> .              List annotations
+  $SCRIPT_NAME <id> .<N>           Edit annotation N
 
 Examples:
-  $SCRIPT_NAME 42           Add new annotation to task 42
-  $SCRIPT_NAME 42.          List annotations on task 42
-  $SCRIPT_NAME 42.1         Edit first annotation on task 42
-  $SCRIPT_NAME 42.3         Edit third annotation on task 42
-  $SCRIPT_NAME -42.1        Remove first annotation from task 42
-  $SCRIPT_NAME 42 .1        (same as 42.1)
-  $SCRIPT_NAME pro:bills .  List annotations on filtered tasks
+  $SCRIPT_NAME 42                  Add new annotation to task 42
+  $SCRIPT_NAME 42.                 List annotations on task 42
+  $SCRIPT_NAME 42.1                Edit first annotation on task 42
+  $SCRIPT_NAME 42.3                Edit third annotation on task 42
+  $SCRIPT_NAME -42.1               Remove first annotation from task 42
+  $SCRIPT_NAME 42 .1               (same as 42.1)
+  $SCRIPT_NAME pro:bills .         List annotations on filtered tasks
+  echo "quick note" | $SCRIPT_NAME 42          Pipe a one-liner
+  git log --oneline -1 | $SCRIPT_NAME 42       Pipe command output
 
 Options:
   -h, --help       Show this help
@@ -136,6 +138,26 @@ resolve_id() {
 }
 
 # ============================================================================
+# Show task context line with annotation count
+# ============================================================================
+
+show_task_context() {
+    local id="$1"
+    local desc
+    desc=$(task _get "$id.description" 2>/dev/null || echo "")
+    local count
+    count=$(get_annotation_count "$id")
+
+    if [[ "$count" -eq 0 ]]; then
+        msg "Task $id: $desc (no annotations)"
+    elif [[ "$count" -eq 1 ]]; then
+        msg "Task $id: $desc (1 annotation)"
+    else
+        msg "Task $id: $desc ($count annotations)"
+    fi
+}
+
+# ============================================================================
 # List annotations
 # ============================================================================
 
@@ -177,33 +199,50 @@ list_annotations() {
 }
 
 # ============================================================================
-# New annotation via editor
+# New annotation via editor or pipe
 # ============================================================================
 
 new_annotation() {
     local id="$1"
-    make_tmpfile "$id"
-
-    $EDITOR "$tmpfile"
-
-    # Check if file has content
-    if [[ ! -s "$tmpfile" ]]; then
-        msg "Empty annotation, nothing saved."
-        return
-    fi
 
     local annot
-    annot="$(cat "$tmpfile")"
+
+    if [[ ! -t 0 ]]; then
+        # Piped input — read stdin directly, skip editor
+        annot="$(cat)"
+
+        if [[ -z "$annot" ]]; then
+            msg "Empty input, nothing saved."
+            return
+        fi
+    else
+        # Interactive — show context and open editor
+        show_task_context "$id"
+
+        make_tmpfile "$id"
+        $EDITOR "$tmpfile"
+
+        # Check if file has content
+        if [[ ! -s "$tmpfile" ]]; then
+            msg "Empty annotation, nothing saved."
+            return
+        fi
+
+        annot="$(cat "$tmpfile")"
+    fi
 
     # Save the annotation
     if task "$id" annotate "$annot"; then
         msg "Annotation added to task $id"
     else
         echo ""
-        msg "Error saving annotation. Your text:"
-        echo "---"
-        cat "$tmpfile"
-        echo "---"
+        msg "Error saving annotation."
+        if [[ -n "${tmpfile:-}" && -f "${tmpfile:-}" ]]; then
+            msg "Your text:"
+            echo "---"
+            cat "$tmpfile"
+            echo "---"
+        fi
     fi
 }
 
@@ -233,6 +272,8 @@ edit_annotation() {
     if [[ -z "$old_text" ]]; then
         die "Could not read annotation .$index"
     fi
+
+    show_task_context "$id"
 
     make_tmpfile "$id"
 
@@ -340,12 +381,19 @@ remove_annotation() {
 # Main
 # ============================================================================
 
-# Handle flags
-case "${1:-}" in
-    -h|--help) usage ;;
-    -v|--version) echo "annn v$VERSION"; exit 0 ;;
-    "") usage ;;
-esac
+# Handle flags (only when stdin is a terminal — pipes shouldn't trigger usage)
+if [[ -t 0 ]]; then
+    case "${1:-}" in
+        -h|--help) usage ;;
+        -v|--version) echo "annn v$VERSION"; exit 0 ;;
+        "") usage ;;
+    esac
+else
+    # Piped mode still needs at least one argument
+    if [[ $# -eq 0 ]]; then
+        die "Usage: echo \"text\" | $SCRIPT_NAME <id>"
+    fi
+fi
 
 # Parse arguments
 # Support combined syntax: "42.1", "42.", "-42.1"
