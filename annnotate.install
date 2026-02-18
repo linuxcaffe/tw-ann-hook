@@ -9,7 +9,7 @@ set -euo pipefail
 
 VERSION="0.5.0"
 APPNAME="annnotate"
-BASE_URL="https://raw.githubusercontent.com/linuxcaffe/annnotate/master"
+BASE_URL="https://raw.githubusercontent.com/linuxcaffe/tw-ann-hook/master"
 
 # Colors
 RED='\033[0;31m'
@@ -114,6 +114,17 @@ install() {
     echo "$APPNAME|$VERSION|$DOCS_DIR/annnotate_README.md||$TIMESTAMP" >> "$MANIFEST_FILE"
     debug_msg "Manifest entry: $DOCS_DIR/annnotate_README.md" 3
 
+    # Register wrapper with tw
+    WRAPPERS_FILE="${HOME}/.task/config/.tw_wrappers"
+    mkdir -p "$(dirname "$WRAPPERS_FILE")"
+    if ! grep -q "^ann|" "$WRAPPERS_FILE" 2>/dev/null; then
+        echo "ann|annn|Open your $EDITOR with annotations, add, list, remove them with easy syntax" >> "$WRAPPERS_FILE"
+        tw_msg "Registered wrapper: ann -> annn"
+        debug_msg "Registered wrapper in .tw_wrappers" 2
+    else
+        tw_msg "Wrapper already registered: ann"
+    fi
+
     debug_msg "Installation complete" 1
     tw_success "Installed annnotate v$VERSION"
     echo ""
@@ -155,6 +166,14 @@ remove() {
         sed -i.bak "/annn.rc/d" "$TASKRC"
         tw_msg "Removed config from .taskrc"
         debug_msg "Removed from .taskrc: annn.rc" 2
+    fi
+
+    # Unregister wrapper from tw
+    WRAPPERS_FILE="${HOME}/.task/config/.tw_wrappers"
+    if grep -q "^ann|" "$WRAPPERS_FILE" 2>/dev/null; then
+        sed -i.bak "/^ann|/d" "$WRAPPERS_FILE"
+        tw_msg "Unregistered wrapper: ann"
+        debug_msg "Removed wrapper from .tw_wrappers" 2
     fi
 
     tw_success "Removed annnotate"
