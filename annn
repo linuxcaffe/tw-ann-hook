@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # annn - Annotation helper for Taskwarrior
-# version 0.4.0
+# version 0.5.1
 #
 # Usage:
-#   annn <id>                Open $EDITOR for a new annotation
-#   annn <id>.               List all annotations with index numbers
-#   annn <id>.<N>            Edit annotation N in $EDITOR
-#   annn -<id>.<N>           Remove annotation N (with confirmation)
-#   echo "text" | annn <id>  Annotate directly from pipe (no editor)
+#   annn <id>                    Open $EDITOR for a new annotation
+#   annn <id>.                   List all annotations with index numbers
+#   annn <id>.<N>                Edit annotation N in $EDITOR
+#   annn <id>.<N> text...        Edit annotation N, pre-populated with text
+#   annn -<id>.<N>               Remove annotation N (with confirmation)
+#   annn <id> text...            Annotate directly, no editor
+#   echo "text" | annn <id>      Annotate from pipe, no editor
 #
 # Designed for Taskwarrior 2.6.2
 # License: MIT
 
 set -euo pipefail
 
-readonly VERSION="0.4.0"
+readonly VERSION="0.5.1"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly EDITOR="${EDITOR:-vim}"
 
@@ -28,28 +30,26 @@ trap 'rm -f "$tmpfile"' EXIT
 
 usage() {
     cat <<EOF
-Usage: $SCRIPT_NAME <id>[.<N>]
+Usage: $SCRIPT_NAME <id>[.<N>] [text...]
 
-  $SCRIPT_NAME <id>                New annotation (opens \$EDITOR)
-  $SCRIPT_NAME <id>.               List annotations
-  $SCRIPT_NAME <id>.<N>            Edit annotation N
-  $SCRIPT_NAME -<id>.<N>           Remove annotation N
-  echo "text" | $SCRIPT_NAME <id>  Annotate from pipe (no editor)
+  $SCRIPT_NAME <id>                    New annotation (opens \$EDITOR)
+  $SCRIPT_NAME <id> text...            New annotation, no editor
+  $SCRIPT_NAME <id>.                   List annotations
+  $SCRIPT_NAME <id>.<N>                Edit annotation N (opens \$EDITOR)
+  $SCRIPT_NAME <id>.<N> text...        Edit annotation N, pre-populated with text
+  $SCRIPT_NAME -<id>.<N>               Remove annotation N (requires index)
+  echo "text" | $SCRIPT_NAME <id>      Annotate from pipe, no editor
 
-  Space-separated form also works:
-  $SCRIPT_NAME <id> .              List annotations
-  $SCRIPT_NAME <id> .<N>           Edit annotation N
+  <id> must be a plain integer or UUID — no filters, tags, or project expressions.
 
 Examples:
-  $SCRIPT_NAME 42                  Add new annotation to task 42
-  $SCRIPT_NAME 42.                 List annotations on task 42
-  $SCRIPT_NAME 42.1                Edit first annotation on task 42
-  $SCRIPT_NAME 42.3                Edit third annotation on task 42
-  $SCRIPT_NAME -42.1               Remove first annotation from task 42
-  $SCRIPT_NAME 42 .1               (same as 42.1)
-  $SCRIPT_NAME pro:bills .         List annotations on filtered tasks
-  echo "quick note" | $SCRIPT_NAME 42          Pipe a one-liner
-  git log --oneline -1 | $SCRIPT_NAME 42       Pipe command output
+  $SCRIPT_NAME 42                      Add new annotation to task 42
+  $SCRIPT_NAME 42 Fixed the bug        Inline annotation, no editor
+  $SCRIPT_NAME 42.                     List annotations on task 42
+  $SCRIPT_NAME 42.1                    Edit first annotation on task 42
+  $SCRIPT_NAME 42.1 see ticket #99     Edit annotation 1, pre-populated
+  $SCRIPT_NAME -42.1                   Remove first annotation from task 42
+  echo "quick note" | $SCRIPT_NAME 42  Pipe a one-liner
 
 Options:
   -h, --help       Show this help
@@ -68,11 +68,50 @@ msg() {
 }
 
 # ============================================================================
+# Validate that a value is a plain integer (task ID)
+# ============================================================================
+
+is_integer() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# ============================================================================
+# Validate that a value is a UUID
+# ============================================================================
+
+is_uuid() {
+    [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+}
+
+# ============================================================================
+# Validate arg1 is a strict ID or ID.N form — no filters, tags, or keywords
+# Accepts: 42  42.  42.3  -42.3  <uuid>
+# ============================================================================
+
+validate_id_arg() {
+    local arg="$1"
+
+    # Remove leading minus for remove-mode check
+    local bare="${arg#-}"
+
+    # Combined dot forms: 42.  42.3  -42.3
+    if [[ "$bare" =~ ^([0-9]+)(\.([0-9]*))?$ ]]; then
+        return 0
+    fi
+
+    # UUID (with optional leading minus — unusual but handle gracefully)
+    if is_uuid "$bare"; then
+        return 0
+    fi
+
+    die "Invalid ID: '$arg' — must be a plain integer or UUID (no filters, tags, or project expressions)"
+}
+
+# ============================================================================
 # Sanitize task description for use in temp filename
 # ============================================================================
 
 sanitize_for_filename() {
-    # Lowercase, replace non-alphanumeric with hyphens, collapse multiples, trim
     echo "$1" | tr '[:upper:]' '[:lower:]' \
               | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' \
               | cut -c1-40
@@ -96,14 +135,7 @@ make_tmpfile() {
 # ============================================================================
 
 get_annotation_count() {
-    local filter="$1"
-
-    # Get the task ID (resolve filter to single task)
-    local id
-    id=$(task rc.verbose=nothing rc.color=off "$filter" _ids 2>/dev/null | head -1)
-    [[ -z "$id" ]] && die "No task found matching: $filter"
-
-    # Count annotations by probing DOM references
+    local id="$1"
     local count=0
     while true; do
         local next=$(( count + 1 ))
@@ -112,29 +144,25 @@ get_annotation_count() {
         [[ -z "$desc" ]] && break
         count=$next
     done
-
     echo "$count"
 }
 
 # ============================================================================
-# Resolve filter to a single task ID
+# Resolve a strict ID (integer or UUID) to confirmed task ID
 # ============================================================================
 
 resolve_id() {
-    local filter="$1"
-    local ids
-    ids=$(task rc.verbose=nothing rc.color=off "$filter" _ids 2>/dev/null)
+    local raw="$1"
+    local id
 
-    local count
-    count=$(echo "$ids" | wc -w)
+    # Confirm the task exists
+    id=$(task rc.verbose=nothing rc.color=off "$raw" _ids 2>/dev/null | head -1)
 
-    if [[ "$count" -eq 0 ]]; then
-        die "No task found matching: $filter"
-    elif [[ "$count" -gt 1 ]]; then
-        die "Filter matches multiple tasks ($count). Please narrow to one task."
+    if [[ -z "$id" ]]; then
+        die "No task found with ID: $raw"
     fi
 
-    echo "$ids" | tr -d '[:space:]'
+    echo "$id"
 }
 
 # ============================================================================
@@ -171,7 +199,6 @@ list_annotations() {
         return
     fi
 
-    # Show task description for context
     local desc
     desc=$(task _get "$id.description" 2>/dev/null)
     echo "Task $id: $desc"
@@ -183,15 +210,12 @@ list_annotations() {
         ann_desc=$(task _get "$id.annotations.${i}.description" 2>/dev/null)
         ann_entry=$(task _get "$id.annotations.${i}.entry" 2>/dev/null)
 
-        # Format the entry date if possible
         local date_str="$ann_entry"
         if command -v date &>/dev/null && [[ -n "$ann_entry" ]]; then
-            # Try to format ISO date to readable form
             date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
         fi
 
         printf "  .%-3d [%s]\n" "$i" "$date_str"
-        # Print annotation text, indented, handling multiline
         echo "$ann_desc" | sed 's/^/       /'
         echo ""
         i=$(( i + 1 ))
@@ -199,39 +223,40 @@ list_annotations() {
 }
 
 # ============================================================================
-# New annotation via editor or pipe
+# New annotation — editor, inline text, or pipe
 # ============================================================================
 
 new_annotation() {
     local id="$1"
+    local inline_text="${2:-}"   # optional pre-supplied text
 
     local annot
 
     if [[ ! -t 0 ]]; then
         # Piped input — read stdin directly, skip editor
         annot="$(cat)"
-
         if [[ -z "$annot" ]]; then
             msg "Empty input, nothing saved."
             return
         fi
+
+    elif [[ -n "$inline_text" ]]; then
+        # Inline text supplied on command line — no editor
+        annot="$inline_text"
+
     else
         # Interactive — show context and open editor
         show_task_context "$id"
-
         make_tmpfile "$id"
         $EDITOR "$tmpfile"
 
-        # Check if file has content
         if [[ ! -s "$tmpfile" ]]; then
             msg "Empty annotation, nothing saved."
             return
         fi
-
         annot="$(cat "$tmpfile")"
     fi
 
-    # Save the annotation
     if task "$id" annotate "$annot"; then
         msg "Annotation added to task $id"
     else
@@ -247,12 +272,13 @@ new_annotation() {
 }
 
 # ============================================================================
-# Edit existing annotation
+# Edit existing annotation — with optional pre-populated text appended
 # ============================================================================
 
 edit_annotation() {
     local id="$1"
     local index="$2"
+    local inline_text="${3:-}"   # optional text to append before editing
 
     local count
     count=$(get_annotation_count "$id")
@@ -265,7 +291,6 @@ edit_annotation() {
         die "Annotation .$index out of range (task has $count annotation(s))"
     fi
 
-    # Fetch current annotation text
     local old_text
     old_text=$(task _get "$id.annotations.${index}.description" 2>/dev/null)
 
@@ -274,15 +299,19 @@ edit_annotation() {
     fi
 
     show_task_context "$id"
-
     make_tmpfile "$id"
 
-    # Write current text to temp file for editing
+    # Write existing annotation text
     echo "$old_text" > "$tmpfile"
+
+    # Append inline text on a new line if supplied
+    if [[ -n "$inline_text" ]]; then
+        echo "" >> "$tmpfile"
+        echo "$inline_text" >> "$tmpfile"
+    fi
 
     $EDITOR "$tmpfile"
 
-    # Check if content changed
     local new_text
     new_text=$(cat "$tmpfile")
 
@@ -291,20 +320,14 @@ edit_annotation() {
         return
     fi
 
-    # Check if emptied
     if [[ -z "$new_text" ]]; then
         msg "Annotation emptied — removing it."
         task "$id" denotate "$old_text"
         return
     fi
 
-    # Replace: denotate old, annotate new
-    # Use exact text for denotate to avoid partial matches
     if task "$id" denotate "$old_text" 2>/dev/null; then
-        local annot
-        annot="$new_text"
-
-        if task "$id" annotate "$annot"; then
+        if task "$id" annotate "$new_text"; then
             msg "Annotation .$index updated on task $id"
         else
             echo ""
@@ -319,7 +342,7 @@ edit_annotation() {
 }
 
 # ============================================================================
-# Remove annotation (with confirmation)
+# Remove annotation (with confirmation) — index required
 # ============================================================================
 
 remove_annotation() {
@@ -337,7 +360,6 @@ remove_annotation() {
         die "Annotation .$index out of range (task has $count annotation(s))"
     fi
 
-    # Fetch annotation text
     local ann_text
     ann_text=$(task _get "$id.annotations.${index}.description" 2>/dev/null)
 
@@ -345,13 +367,11 @@ remove_annotation() {
         die "Could not read annotation .$index"
     fi
 
-    # Show task context
     local desc
     desc=$(task _get "$id.description" 2>/dev/null)
     echo "Task $id: $desc"
     echo "---"
 
-    # Show the annotation to be removed
     local ann_entry
     ann_entry=$(task _get "$id.annotations.${index}.entry" 2>/dev/null)
     local date_str="$ann_entry"
@@ -363,7 +383,6 @@ remove_annotation() {
     echo "$ann_text" | sed 's/^/       /'
     echo ""
 
-    # Confirm
     read -rp "Remove this annotation? [y/N]: " response
     if [[ "${response,,}" != "y" ]]; then
         msg "Cancelled."
@@ -389,65 +408,102 @@ if [[ -t 0 ]]; then
         "") usage ;;
     esac
 else
-    # Piped mode still needs at least one argument
     if [[ $# -eq 0 ]]; then
         die "Usage: echo \"text\" | $SCRIPT_NAME <id>"
     fi
 fi
 
-# Parse arguments
-# Support combined syntax: "42.1", "42.", "-42.1"
-# and space-separated: "42 .1", "42 ."
-arg1="$1"
+# ============================================================================
+# Argument parsing
+#
+# Strict: arg1 must be integer, integer+dot, integer+dot+N, -integer.N, or UUID.
+# No filter expressions, project:, +tag, or bare words permitted as ID.
+#
+# Accepted forms:
+#   annn 42               → new annotation (editor)
+#   annn 42 text...       → new annotation (inline, no editor)
+#   annn 42.              → list annotations
+#   annn 42.3             → edit annotation 3 (editor)
+#   annn 42.3 text...     → edit annotation 3 (editor, text appended)
+#   annn -42.3            → remove annotation 3
+# ============================================================================
+
+arg1="${1:-}"
 shift
 
-remove_mode=false
+# Validate arg1 before anything else
+validate_id_arg "$arg1"
 
-if [[ $# -eq 0 ]] && [[ "$arg1" =~ ^-([0-9]+)\.([0-9]+)$ ]]; then
-    # Remove: "-42.1"
+remove_mode=false
+filter=""
+action="new"
+ann_index=""
+
+if [[ "$arg1" =~ ^-([0-9]+)\.([0-9]+)$ ]]; then
+    # Remove mode: -42.3
     filter="${BASH_REMATCH[1]}"
-    action=".${BASH_REMATCH[2]}"
+    ann_index="${BASH_REMATCH[2]}"
     remove_mode=true
-elif [[ $# -eq 0 ]] && [[ "$arg1" =~ ^([0-9]+)(\.([0-9]*))$ ]]; then
-    # Combined: "42." or "42.1"
+
+elif [[ "$arg1" =~ ^-([0-9]+)(\.?)$ ]]; then
+    # -42 or -42. without an index — ambiguous, require index
+    die "Remove requires an annotation index: use -${BASH_REMATCH[1]}.<N>"
+
+elif [[ "$arg1" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    # Combined edit: 42.3
     filter="${BASH_REMATCH[1]}"
-    action=".${BASH_REMATCH[3]}"
-else
-    # Two-arg form: "42 .1" or "42 ." or just "42"
+    ann_index="${BASH_REMATCH[2]}"
+    action="edit"
+
+elif [[ "$arg1" =~ ^([0-9]+)\.$  ]]; then
+    # List: 42.
+    filter="${BASH_REMATCH[1]}"
+    action="list"
+
+elif is_integer "$arg1" || is_uuid "$arg1"; then
+    # Plain ID — new annotation (or inline if args follow)
     filter="$arg1"
-    action="${1:-new}"
+    action="new"
+
+else
+    die "Invalid ID: '$arg1' — must be a plain integer or UUID"
 fi
 
-# Resolve task ID
+# Resolve to confirmed task ID
 id=$(resolve_id "$filter")
 
+# Collect any remaining args as inline text
+inline_text=""
+if [[ $# -gt 0 ]]; then
+    inline_text="$*"
+fi
+
+# ============================================================================
+# Dispatch
+# ============================================================================
+
 if [[ "$remove_mode" == true ]]; then
-    # Remove annotation
-    index="${action#.}"
-    if ! [[ "$index" =~ ^[0-9]+$ ]]; then
-        die "Invalid annotation index: .$index"
+    if ! [[ "$ann_index" =~ ^[0-9]+$ ]]; then
+        die "Invalid annotation index: .$ann_index"
     fi
-    remove_annotation "$id" "$index"
+    remove_annotation "$id" "$ann_index"
+
 else
     case "$action" in
-        .)
-            # List annotations
+        list)
             list_annotations "$id"
             ;;
-        .*)
-            # Edit annotation N
-            index="${action#.}"
-            if ! [[ "$index" =~ ^[0-9]+$ ]]; then
-                die "Invalid annotation index: .$index"
+        edit)
+            if ! [[ "$ann_index" =~ ^[0-9]+$ ]]; then
+                die "Invalid annotation index: .$ann_index"
             fi
-            edit_annotation "$id" "$index"
+            edit_annotation "$id" "$ann_index" "$inline_text"
             ;;
         new)
-            # New annotation
-            new_annotation "$id"
+            new_annotation "$id" "$inline_text"
             ;;
         *)
-            die "Unknown action: $action (use . or .<N>)"
+            die "Unknown action: $action"
             ;;
     esac
 fi
