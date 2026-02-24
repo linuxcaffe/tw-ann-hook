@@ -14,3 +14,17 @@ annn.on_delete=yes
 
 # Editor override (leave empty to use EDITOR, defaults to vim)
 annn.editor=
+
+# indent.annotation=2
+# dateformat.annotation=
+
+# journal.time=0
+#        May be "1" or "0", and determines whether the 'start' and 'stop' commands should record an annotation when being executed. The default value is "0". The text of the corre‐
+#        sponding annotations is controlled by:
+
+# journal.time.start.annotation=Started task
+#        The text of the annotation that is recorded when executing the start command and having set journal.time.
+
+# journal.time.stop.annotation=Stopped task
+#        The text of the annotation that is recorded when executing the stop command and having set journal.time.
+
