@@ -84,8 +84,17 @@ is_uuid() {
 }
 
 # ============================================================================
+# Validate a label name: letters/digits/hyphens, starting with a letter.
+# 'note' is reserved for tasknotes.
+# ============================================================================
+
+is_label() {
+    [[ "$1" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]] && [[ "${1,,}" != "note" ]]
+}
+
+# ============================================================================
 # Validate arg1 is a strict ID or ID.N form — no filters, tags, or keywords
-# Accepts: 42  42.  42.3  -42.3  <uuid>
+# Accepts: 42  42.  42.3  -42.3  42.label  -42.label  <uuid>
 # ============================================================================
 
 validate_id_arg() {
@@ -94,8 +103,13 @@ validate_id_arg() {
     # Remove leading minus for remove-mode check
     local bare="${arg#-}"
 
-    # Combined dot forms: 42.  42.3  -42.3
+    # Numeric dot forms: 42.  42.3  -42.3
     if [[ "$bare" =~ ^([0-9]+)(\.([0-9]*))?$ ]]; then
+        return 0
+    fi
+
+    # Label dot form: 42.label  -42.label
+    if [[ "$bare" =~ ^([0-9]+)\.([a-zA-Z][a-zA-Z0-9_-]*)$ ]]; then
         return 0
     fi
 
@@ -216,7 +230,12 @@ list_annotations() {
         fi
 
         printf "  .%-3d [%s]\n" "$i" "$date_str"
-        echo "$ann_desc" | sed 's/^/       /'
+        # Highlight label: prefix if present
+        if [[ "$ann_desc" =~ ^([a-zA-Z][a-zA-Z0-9_-]*):\ (.*)$ ]]; then
+            printf "       \033[1m%s:\033[0m %s\n" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        else
+            echo "$ann_desc" | sed 's/^/       /'
+        fi
         echo ""
         i=$(( i + 1 ))
     done
@@ -245,16 +264,32 @@ new_annotation() {
         annot="$inline_text"
 
     else
-        # Interactive — show context and open editor
+        # Interactive — optionally prompt for a label, then open editor
         show_task_context "$id"
+        local label_prompt=""
+        read -rp "[annn] Label (optional, e.g. status, link — Enter to skip): " label_prompt
+        if [[ -n "$label_prompt" ]]; then
+            if [[ "${label_prompt,,}" == "note" ]]; then
+                die "'note:' is reserved for tasknotes"
+            fi
+            if ! is_label "$label_prompt"; then
+                die "Invalid label '$label_prompt' — use letters, digits, hyphens only"
+            fi
+        fi
         make_tmpfile "$id"
+        [[ -n "$label_prompt" ]] && printf '%s: ' "$label_prompt" > "$tmpfile"
         $EDITOR "$tmpfile"
 
         if [[ ! -s "$tmpfile" ]]; then
             msg "Empty annotation, nothing saved."
             return
         fi
-        annot="$(cat "$tmpfile")"
+        annot="$(cat "$tmpfile" | sed 's/[[:space:]]*$//')"
+        # Reject if only the pre-populated "label: " remains with no content
+        if [[ -n "$label_prompt" && "$annot" == "${label_prompt}:" ]]; then
+            msg "Empty annotation, nothing saved."
+            return
+        fi
     fi
 
     if task "$id" annotate "$annot"; then
@@ -338,6 +373,179 @@ edit_annotation() {
         fi
     else
         msg "Warning: could not remove old annotation. No changes made."
+    fi
+}
+
+# ============================================================================
+# Find annotations by label — returns matching index numbers (one per line)
+# ============================================================================
+
+find_by_label() {
+    local id="$1"
+    local label="${2,,}"   # lowercase for case-insensitive match
+    local count
+    count=$(get_annotation_count "$id")
+    local i=1
+    while [[ $i -le $count ]]; do
+        local desc
+        desc=$(task _get "$id.annotations.${i}.description" 2>/dev/null)
+        if [[ "${desc,,}" =~ ^${label}:[[:space:]] ]]; then
+            echo "$i"
+        fi
+        i=$(( i + 1 ))
+    done
+}
+
+# ============================================================================
+# Create a new annotation pre-populated with a label prefix
+# ============================================================================
+
+new_labeled_annotation() {
+    local id="$1"
+    local label="$2"
+    local inline_text="${3:-}"
+
+    if [[ ! -t 0 ]]; then
+        # Pipe: prepend label to piped content
+        local content
+        content="$(cat)"
+        if [[ -z "$content" ]]; then
+            msg "Empty input, nothing saved."
+            return
+        fi
+        if task "$id" annotate "${label}: ${content}"; then
+            msg "Annotation added to task $id"
+        else
+            msg "Error saving annotation."
+        fi
+        return
+    fi
+
+    if [[ -n "$inline_text" ]]; then
+        # Inline text: prepend label
+        if task "$id" annotate "${label}: ${inline_text}"; then
+            msg "Annotation added to task $id"
+        else
+            msg "Error saving annotation."
+        fi
+        return
+    fi
+
+    # Interactive: pre-populate editor with "label: "
+    show_task_context "$id"
+    make_tmpfile "$id"
+    printf '%s: ' "$label" > "$tmpfile"
+    $EDITOR "$tmpfile"
+
+    local annot
+    annot="$(cat "$tmpfile" | sed 's/[[:space:]]*$//')"
+    if [[ -z "$annot" || "$annot" == "${label}:" ]]; then
+        msg "Empty annotation, nothing saved."
+        return
+    fi
+
+    if task "$id" annotate "$annot"; then
+        msg "Annotation added to task $id"
+    else
+        msg "Error saving annotation."
+    fi
+}
+
+# ============================================================================
+# Dispatch action by label — create, edit, or select from duplicates
+# ============================================================================
+
+label_action() {
+    local id="$1"
+    local label="$2"
+    local inline_text="${3:-}"
+
+    if [[ "${label,,}" == "note" ]]; then
+        die "'note:' is reserved for tasknotes"
+    fi
+
+    mapfile -t matches < <(find_by_label "$id" "$label")
+    local count="${#matches[@]}"
+
+    if [[ $count -eq 0 ]]; then
+        new_labeled_annotation "$id" "$label" "$inline_text"
+
+    elif [[ $count -eq 1 ]]; then
+        edit_annotation "$id" "${matches[0]}" "$inline_text"
+
+    else
+        # Multiple — list and prompt for selection
+        local desc
+        desc=$(task _get "$id.description" 2>/dev/null)
+        echo "Task $id: $desc"
+        echo "Multiple '${label}:' annotations — select one:"
+        echo "---"
+        for idx in "${matches[@]}"; do
+            local ann_desc ann_entry date_str
+            ann_desc=$(task _get "$id.annotations.${idx}.description" 2>/dev/null)
+            ann_entry=$(task _get "$id.annotations.${idx}.entry" 2>/dev/null)
+            date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
+            printf "  .%-3d [%s]\n" "$idx" "$date_str"
+            echo "$ann_desc" | sed 's/^/       /'
+            echo ""
+        done
+        read -rp "Edit which? [.N or Enter to cancel]: " sel
+        sel="${sel#.}"
+        [[ -z "$sel" ]] && { msg "Cancelled."; return; }
+        local valid=false
+        for idx in "${matches[@]}"; do
+            [[ "$idx" == "$sel" ]] && valid=true && break
+        done
+        $valid || die ".$sel is not one of the matching annotations"
+        edit_annotation "$id" "$sel" "$inline_text"
+    fi
+}
+
+# ============================================================================
+# Remove annotation by label (with confirmation) — handles duplicates
+# ============================================================================
+
+remove_by_label() {
+    local id="$1"
+    local label="$2"
+
+    if [[ "${label,,}" == "note" ]]; then
+        die "'note:' is reserved for tasknotes"
+    fi
+
+    mapfile -t matches < <(find_by_label "$id" "$label")
+    local count="${#matches[@]}"
+
+    if [[ $count -eq 0 ]]; then
+        die "No '${label}:' annotation found on task $id"
+
+    elif [[ $count -eq 1 ]]; then
+        remove_annotation "$id" "${matches[0]}"
+
+    else
+        local desc
+        desc=$(task _get "$id.description" 2>/dev/null)
+        echo "Task $id: $desc"
+        echo "Multiple '${label}:' annotations — select one to remove:"
+        echo "---"
+        for idx in "${matches[@]}"; do
+            local ann_desc ann_entry date_str
+            ann_desc=$(task _get "$id.annotations.${idx}.description" 2>/dev/null)
+            ann_entry=$(task _get "$id.annotations.${idx}.entry" 2>/dev/null)
+            date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
+            printf "  .%-3d [%s]\n" "$idx" "$date_str"
+            echo "$ann_desc" | sed 's/^/       /'
+            echo ""
+        done
+        read -rp "Remove which? [.N or Enter to cancel]: " sel
+        sel="${sel#.}"
+        [[ -z "$sel" ]] && { msg "Cancelled."; return; }
+        local valid=false
+        for idx in "${matches[@]}"; do
+            [[ "$idx" == "$sel" ]] && valid=true && break
+        done
+        $valid || die ".$sel is not one of the matching annotations"
+        remove_annotation "$id" "$sel"
     fi
 }
 
@@ -438,19 +646,33 @@ remove_mode=false
 filter=""
 action="new"
 ann_index=""
+ann_label=""
 
-if [[ "$arg1" =~ ^-([0-9]+)\.([0-9]+)$ ]]; then
-    # Remove mode: -42.3
+if [[ "$arg1" =~ ^-([0-9]+)\.([a-zA-Z][a-zA-Z0-9_-]*)$ ]]; then
+    # Remove by label: -42.status
+    filter="${BASH_REMATCH[1]}"
+    ann_label="${BASH_REMATCH[2]}"
+    remove_mode=true
+    action="label"
+
+elif [[ "$arg1" =~ ^-([0-9]+)\.([0-9]+)$ ]]; then
+    # Remove by index: -42.3
     filter="${BASH_REMATCH[1]}"
     ann_index="${BASH_REMATCH[2]}"
     remove_mode=true
 
 elif [[ "$arg1" =~ ^-([0-9]+)(\.?)$ ]]; then
     # -42 or -42. without an index — ambiguous, require index
-    die "Remove requires an annotation index: use -${BASH_REMATCH[1]}.<N>"
+    die "Remove requires an annotation index or label: use -${BASH_REMATCH[1]}.<N> or -${BASH_REMATCH[1]}.<label>"
+
+elif [[ "$arg1" =~ ^([0-9]+)\.([a-zA-Z][a-zA-Z0-9_-]*)$ ]]; then
+    # Label action: 42.status
+    filter="${BASH_REMATCH[1]}"
+    ann_label="${BASH_REMATCH[2]}"
+    action="label"
 
 elif [[ "$arg1" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
-    # Combined edit: 42.3
+    # Edit by index: 42.3
     filter="${BASH_REMATCH[1]}"
     ann_index="${BASH_REMATCH[2]}"
     action="edit"
@@ -483,10 +705,13 @@ fi
 # ============================================================================
 
 if [[ "$remove_mode" == true ]]; then
-    if ! [[ "$ann_index" =~ ^[0-9]+$ ]]; then
+    if [[ "$action" == "label" ]]; then
+        remove_by_label "$id" "$ann_label"
+    elif ! [[ "$ann_index" =~ ^[0-9]+$ ]]; then
         die "Invalid annotation index: .$ann_index"
+    else
+        remove_annotation "$id" "$ann_index"
     fi
-    remove_annotation "$id" "$ann_index"
 
 else
     case "$action" in
@@ -498,6 +723,9 @@ else
                 die "Invalid annotation index: .$ann_index"
             fi
             edit_annotation "$id" "$ann_index" "$inline_text"
+            ;;
+        label)
+            label_action "$id" "$ann_label" "$inline_text"
             ;;
         new)
             new_annotation "$id" "$inline_text"

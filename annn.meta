@@ -2,16 +2,20 @@
 # Opens annotations in your editor, add, list or remove them with easy syntax
 
 name=annn
-version=0.5.2
-type=hook
+version=0.6.0
+type=wrapper
 description=Opens annotations in your editor, add, list or remove them with easy syntax
 repo=https://github.com/linuxcaffe/tw-ann-hook
 base_url=https://raw.githubusercontent.com/linuxcaffe/tw-ann-hook/master
 files=on-exit_annn.py:hook,annn:script,annn.rc:config,README.md:doc
-tags=annotation, list, edit, wrapper
+tags=annotation, label, list, edit, wrapper
 
-checksums=a7f7e6b66acfea3d237f11643fdbecde16e1e3adfb0e9d4449899629addcdbb3,81ec6dd5849f45b8f65509d5437f5d929370a2cf42265eeb8b191b74482ebdad,c068f842cb39314d9ec3e2ec2c4cc6ebe85f1edb271a04299261b9a60d6033e8,13a504d6165a282b156fe9894f2c6483a551cfb9ea9e508177ce0e35b10e8408
+checksums=a7f7e6b66acfea3d237f11643fdbecde16e1e3adfb0e9d4449899629addcdbb3,3b78c53b0193573f583cc4446a7f49a50b76adc0eb929b81bd58f66fd5e03651,c068f842cb39314d9ec3e2ec2c4cc6ebe85f1edb271a04299261b9a60d6033e8,6c76934b5e50b8e75966cc192c4b417304f52faa2969ed3d3df3b630473f0913
 
 author=Designed by linuxcaffe, implemented by Claude Sonnet 4.5
 license=MIT
 requires_taskwarrior=2.6.0
+
+wrapper.keyword=ann
+wrapper.script=annn
+wrapper.type=command

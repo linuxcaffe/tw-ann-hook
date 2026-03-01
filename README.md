@@ -16,6 +16,7 @@ task completion or deletion.
 - List annotations with numbered indexes
 - Remove annotations with confirmation
 - Compact dot-syntax: `annn 42.1` to edit, `annn -42.1` to remove
+- Label syntax: `annn 42.status` to edit/create the `status:` annotation
 - Optional hook: auto-prompt for annotation when completing or deleting `+ann` tasks
 - Works standalone or as a tw wrapper: `tw 42 ann.1`
 - Designed for Taskwarrior 2.6.2
@@ -62,11 +63,14 @@ Each component works independently. Use one, two, or all three.
 ## CLI usage
 
 ```
-annn <id>                New annotation (opens $EDITOR)
-annn <id>.               List annotations with index numbers
-annn <id>.<N>            Edit annotation N
-annn -<id>.<N>           Remove annotation N (with confirmation)
-echo "text" | annn <id>  Annotate from pipe (no editor)
+annn <id>                  New annotation (opens $EDITOR, prompts for label)
+annn <id>.                 List annotations with index numbers
+annn <id>.<N>              Edit annotation N by index
+annn <id>.<label>          Edit/create annotation by label
+annn -<id>.<N>             Remove annotation N (with confirmation)
+annn -<id>.<label>         Remove annotation by label (with confirmation)
+echo "text" | annn <id>    Annotate from pipe (no editor)
+echo "text" | annn <id>.<label>  Pipe with label prefix
 ```
 
 Space-separated form also works: `annn 42 .1` is the same as `annn 42.1`.
@@ -148,17 +152,86 @@ annn -42.2
 
 ---
 
+## Labels
+
+An annotation label is a leading `word: ` prefix — a single word followed by
+a colon and space at the start of the annotation text:
+
+```
+status: blocked waiting for vendor callback
+link: https://ticket.example.com/TKT-42
+reason: duplicate of task 17
+```
+
+Labels are entirely optional. Any annotation can have one, none are required,
+and they can be added by `annn` or by any other means. The label is just part
+of the annotation text — no UDAs or extra configuration needed.
+
+**`note:` is reserved** for the tasknotes function and cannot be used as a
+label in `annn`.
+
+### Addressing by label
+
+```bash
+annn 42.status           # edit the "status:" annotation (create if absent)
+annn 42.status text...   # set inline: saves as "status: text..."
+echo "url" | annn 42.link  # pipe: saves as "link: url"
+annn -42.status          # remove the "status:" annotation
+```
+
+If no `status:` annotation exists, `annn` opens the editor pre-populated with
+`status: ` so the label is already in place.
+
+If multiple annotations share the same label, `annn` lists them and prompts
+for a selection before editing or removing.
+
+### Label prompt on new annotations
+
+When creating a new annotation interactively (`annn 42`), `annn` offers an
+optional label prompt before opening the editor:
+
+```
+[annn] Task 42: Fix billing discrepancy (1 annotation)
+[annn] Label (optional, e.g. status, link — Enter to skip):
+```
+
+Press Enter to skip; type a label name to pre-populate the editor with
+`label: `.
+
+### List display
+
+Labels are highlighted in the annotation list:
+
+```bash
+annn 42.
+# Task 42: Fix billing discrepancy
+# ---
+#   .1   [2026-02-17 12:52]
+#        status: blocked waiting for vendor callback
+#
+#   .2   [2026-02-17 13:10]
+#        link: https://ticket.example.com/TKT-42
+#
+#   .3   [2026-02-17 14:00]
+#        general note without a label
+```
+
+---
+
 ## tw wrapper usage
 
 When installed via awesome-taskwarrior, all `annn` commands are available
 through tw:
 
 ```bash
-tw 42 ann          # new annotation
-tw 42 ann.         # list annotations
-tw 42 ann.1        # edit annotation 1
-tw 42 -ann.1       # remove annotation 1
-echo "note" | tw 42 ann   # pipe input
+tw 42 ann            # new annotation
+tw 42 ann.           # list annotations
+tw 42 ann.1          # edit annotation 1
+tw 42 -ann.1         # remove annotation 1
+tw 42 ann.status     # edit/create "status:" annotation
+tw 42 -ann.status    # remove "status:" annotation
+echo "note" | tw 42 ann         # pipe input
+echo "url" | tw 42 ann.link     # pipe with label
 ```
 
 tw detects the `ann` keyword, translates the arguments, and dispatches to
@@ -273,7 +346,7 @@ these edge cases gracefully.
 
 ## Metadata
 
-- Version: 0.5.0
+- Version: 0.6.0
 - License: MIT
 - Language: Bash (CLI), Python (hook)
 - Interface: CLI + `$EDITOR`
