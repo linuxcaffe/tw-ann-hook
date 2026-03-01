@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-readonly VERSION="0.5.1"
+readonly VERSION="0.7.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly EDITOR="${EDITOR:-vim}"
 
@@ -65,6 +65,38 @@ die() {
 
 msg() {
     echo "[annn] $*"
+}
+
+# ============================================================================
+# Load label template into tmpfile, or fall back to bare "label: " prefix
+# Template file: ~/.task/templates/<label>.md (case-insensitive label match)
+# ============================================================================
+
+load_template() {
+    local label="${1,,}"   # lowercase
+    local tfile="${HOME}/.task/templates/${label}.md"
+    if [[ -f "$tfile" ]]; then
+        echo "$tfile"
+    fi
+}
+
+populate_tmpfile_for_label() {
+    local label="$1"
+    local template
+    template=$(load_template "$label")
+    if [[ -n "$template" ]]; then
+        cp "$template" "$tmpfile"
+    else
+        printf '%s: ' "$label" > "$tmpfile"
+    fi
+}
+
+# ============================================================================
+# Read-only task query — rc.hooks=off prevents cascading hook invocations
+# ============================================================================
+
+task_get() {
+    task rc.hooks=off rc.verbose=nothing _get "$@" 2>/dev/null
 }
 
 # ============================================================================
@@ -138,7 +170,7 @@ sanitize_for_filename() {
 make_tmpfile() {
     local id="$1"
     local desc
-    desc=$(task _get "$id.description" 2>/dev/null || echo "")
+    desc=$(task_get "$id.description" 2>/dev/null || echo "")
     local slug
     slug=$(sanitize_for_filename "${desc:-task}")
     tmpfile=$(mktemp "/tmp/annn_${id}_${slug}.XXXXXX.md")
@@ -154,7 +186,7 @@ get_annotation_count() {
     while true; do
         local next=$(( count + 1 ))
         local desc
-        desc=$(task _get "$id.annotations.${next}.description" 2>/dev/null) || break
+        desc=$(task_get "$id.annotations.${next}.description" 2>/dev/null) || break
         [[ -z "$desc" ]] && break
         count=$next
     done
@@ -170,7 +202,7 @@ resolve_id() {
     local id
 
     # Confirm the task exists
-    id=$(task rc.verbose=nothing rc.color=off "$raw" _ids 2>/dev/null | head -1)
+    id=$(task rc.hooks=off rc.verbose=nothing rc.color=off "$raw" _ids 2>/dev/null | head -1)
 
     if [[ -z "$id" ]]; then
         die "No task found with ID: $raw"
@@ -186,7 +218,7 @@ resolve_id() {
 show_task_context() {
     local id="$1"
     local desc
-    desc=$(task _get "$id.description" 2>/dev/null || echo "")
+    desc=$(task_get "$id.description" 2>/dev/null || echo "")
     local count
     count=$(get_annotation_count "$id")
 
@@ -214,15 +246,15 @@ list_annotations() {
     fi
 
     local desc
-    desc=$(task _get "$id.description" 2>/dev/null)
+    desc=$(task_get "$id.description" 2>/dev/null)
     echo "Task $id: $desc"
     echo "---"
 
     local i=1
     while [[ $i -le $count ]]; do
         local ann_desc ann_entry
-        ann_desc=$(task _get "$id.annotations.${i}.description" 2>/dev/null)
-        ann_entry=$(task _get "$id.annotations.${i}.entry" 2>/dev/null)
+        ann_desc=$(task_get "$id.annotations.${i}.description" 2>/dev/null)
+        ann_entry=$(task_get "$id.annotations.${i}.entry" 2>/dev/null)
 
         local date_str="$ann_entry"
         if command -v date &>/dev/null && [[ -n "$ann_entry" ]]; then
@@ -270,14 +302,15 @@ new_annotation() {
         read -rp "[annn] Label (optional, e.g. status, link — Enter to skip): " label_prompt
         if [[ -n "$label_prompt" ]]; then
             if [[ "${label_prompt,,}" == "note" ]]; then
-                die "'note:' is reserved for tasknotes"
+                note_action "$id" ""
+                return
             fi
             if ! is_label "$label_prompt"; then
                 die "Invalid label '$label_prompt' — use letters, digits, hyphens only"
             fi
         fi
         make_tmpfile "$id"
-        [[ -n "$label_prompt" ]] && printf '%s: ' "$label_prompt" > "$tmpfile"
+        [[ -n "$label_prompt" ]] && populate_tmpfile_for_label "$label_prompt"
         $EDITOR "$tmpfile"
 
         if [[ ! -s "$tmpfile" ]]; then
@@ -292,7 +325,7 @@ new_annotation() {
         fi
     fi
 
-    if task "$id" annotate "$annot"; then
+    if task rc.verbose=nothing rc.confirmation=off "$id" annotate "$annot"; then
         msg "Annotation added to task $id"
     else
         echo ""
@@ -327,7 +360,7 @@ edit_annotation() {
     fi
 
     local old_text
-    old_text=$(task _get "$id.annotations.${index}.description" 2>/dev/null)
+    old_text=$(task_get "$id.annotations.${index}.description" 2>/dev/null)
 
     if [[ -z "$old_text" ]]; then
         die "Could not read annotation .$index"
@@ -357,12 +390,12 @@ edit_annotation() {
 
     if [[ -z "$new_text" ]]; then
         msg "Annotation emptied — removing it."
-        task "$id" denotate "$old_text"
+        task rc.verbose=nothing rc.confirmation=off "$id" denotate "$old_text"
         return
     fi
 
-    if task "$id" denotate "$old_text" 2>/dev/null; then
-        if task "$id" annotate "$new_text"; then
+    if task rc.verbose=nothing rc.confirmation=off "$id" denotate "$old_text" 2>/dev/null; then
+        if task rc.verbose=nothing rc.confirmation=off "$id" annotate "$new_text"; then
             msg "Annotation .$index updated on task $id"
         else
             echo ""
@@ -388,7 +421,7 @@ find_by_label() {
     local i=1
     while [[ $i -le $count ]]; do
         local desc
-        desc=$(task _get "$id.annotations.${i}.description" 2>/dev/null)
+        desc=$(task_get "$id.annotations.${i}.description" 2>/dev/null)
         if [[ "${desc,,}" =~ ^${label}:[[:space:]] ]]; then
             echo "$i"
         fi
@@ -413,7 +446,7 @@ new_labeled_annotation() {
             msg "Empty input, nothing saved."
             return
         fi
-        if task "$id" annotate "${label}: ${content}"; then
+        if task rc.verbose=nothing rc.confirmation=off "$id" annotate "${label}: ${content}"; then
             msg "Annotation added to task $id"
         else
             msg "Error saving annotation."
@@ -423,7 +456,7 @@ new_labeled_annotation() {
 
     if [[ -n "$inline_text" ]]; then
         # Inline text: prepend label
-        if task "$id" annotate "${label}: ${inline_text}"; then
+        if task rc.verbose=nothing rc.confirmation=off "$id" annotate "${label}: ${inline_text}"; then
             msg "Annotation added to task $id"
         else
             msg "Error saving annotation."
@@ -431,10 +464,10 @@ new_labeled_annotation() {
         return
     fi
 
-    # Interactive: pre-populate editor with "label: "
+    # Interactive: pre-populate editor with template or bare "label: "
     show_task_context "$id"
     make_tmpfile "$id"
-    printf '%s: ' "$label" > "$tmpfile"
+    populate_tmpfile_for_label "$label"
     $EDITOR "$tmpfile"
 
     local annot
@@ -444,7 +477,7 @@ new_labeled_annotation() {
         return
     fi
 
-    if task "$id" annotate "$annot"; then
+    if task rc.verbose=nothing rc.confirmation=off "$id" annotate "$annot"; then
         msg "Annotation added to task $id"
     else
         msg "Error saving annotation."
@@ -460,10 +493,6 @@ label_action() {
     local label="$2"
     local inline_text="${3:-}"
 
-    if [[ "${label,,}" == "note" ]]; then
-        die "'note:' is reserved for tasknotes"
-    fi
-
     mapfile -t matches < <(find_by_label "$id" "$label")
     local count="${#matches[@]}"
 
@@ -476,14 +505,14 @@ label_action() {
     else
         # Multiple — list and prompt for selection
         local desc
-        desc=$(task _get "$id.description" 2>/dev/null)
+        desc=$(task_get "$id.description" 2>/dev/null)
         echo "Task $id: $desc"
         echo "Multiple '${label}:' annotations — select one:"
         echo "---"
         for idx in "${matches[@]}"; do
             local ann_desc ann_entry date_str
-            ann_desc=$(task _get "$id.annotations.${idx}.description" 2>/dev/null)
-            ann_entry=$(task _get "$id.annotations.${idx}.entry" 2>/dev/null)
+            ann_desc=$(task_get "$id.annotations.${idx}.description" 2>/dev/null)
+            ann_entry=$(task_get "$id.annotations.${idx}.entry" 2>/dev/null)
             date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
             printf "  .%-3d [%s]\n" "$idx" "$date_str"
             echo "$ann_desc" | sed 's/^/       /'
@@ -509,10 +538,6 @@ remove_by_label() {
     local id="$1"
     local label="$2"
 
-    if [[ "${label,,}" == "note" ]]; then
-        die "'note:' is reserved for tasknotes"
-    fi
-
     mapfile -t matches < <(find_by_label "$id" "$label")
     local count="${#matches[@]}"
 
@@ -524,14 +549,14 @@ remove_by_label() {
 
     else
         local desc
-        desc=$(task _get "$id.description" 2>/dev/null)
+        desc=$(task_get "$id.description" 2>/dev/null)
         echo "Task $id: $desc"
         echo "Multiple '${label}:' annotations — select one to remove:"
         echo "---"
         for idx in "${matches[@]}"; do
             local ann_desc ann_entry date_str
-            ann_desc=$(task _get "$id.annotations.${idx}.description" 2>/dev/null)
-            ann_entry=$(task _get "$id.annotations.${idx}.entry" 2>/dev/null)
+            ann_desc=$(task_get "$id.annotations.${idx}.description" 2>/dev/null)
+            ann_entry=$(task_get "$id.annotations.${idx}.entry" 2>/dev/null)
             date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
             printf "  .%-3d [%s]\n" "$idx" "$date_str"
             echo "$ann_desc" | sed 's/^/       /'
@@ -569,19 +594,19 @@ remove_annotation() {
     fi
 
     local ann_text
-    ann_text=$(task _get "$id.annotations.${index}.description" 2>/dev/null)
+    ann_text=$(task_get "$id.annotations.${index}.description" 2>/dev/null)
 
     if [[ -z "$ann_text" ]]; then
         die "Could not read annotation .$index"
     fi
 
     local desc
-    desc=$(task _get "$id.description" 2>/dev/null)
+    desc=$(task_get "$id.description" 2>/dev/null)
     echo "Task $id: $desc"
     echo "---"
 
     local ann_entry
-    ann_entry=$(task _get "$id.annotations.${index}.entry" 2>/dev/null)
+    ann_entry=$(task_get "$id.annotations.${index}.entry" 2>/dev/null)
     local date_str="$ann_entry"
     if command -v date &>/dev/null && [[ -n "$ann_entry" ]]; then
         date_str=$(date -d "$ann_entry" "+%Y-%m-%d %H:%M" 2>/dev/null) || date_str="$ann_entry"
@@ -597,10 +622,155 @@ remove_annotation() {
         return
     fi
 
-    if task "$id" denotate "$ann_text"; then
+    if task rc.verbose=nothing rc.confirmation=off "$id" denotate "$ann_text"; then
         msg "Annotation .$index removed from task $id"
     else
         msg "Error: could not remove annotation .$index"
+    fi
+}
+
+# ============================================================================
+# Task notes — note: label with file storage in ~/.task/notes/
+# File: ~/.task/notes/<slug>-<uuid8>.note.md
+# ============================================================================
+
+NOTES_DIR="${HOME}/.task/notes"
+
+get_note_file() {
+    local id="$1"
+    local desc uuid slug
+    desc=$(task_get "$id.description")
+    uuid=$(task_get "$id.uuid")
+    slug=$(sanitize_for_filename "${desc:-task}")
+    echo "${NOTES_DIR}/${slug}-${uuid:0:8}.note.md"
+}
+
+update_note_annotation() {
+    local id="$1"
+    local note_file="$2"
+    local first_line
+    first_line=$(grep -m1 '.' "$note_file" 2>/dev/null || echo "")
+
+    # Remove any existing note: annotation(s)
+    local idxs old_text
+    mapfile -t idxs < <(find_by_label "$id" "note")
+    for idx in "${idxs[@]}"; do
+        old_text=$(task_get "$id.annotations.${idx}.description")
+        task rc.verbose=nothing rc.confirmation=off "$id" denotate "$old_text" 2>/dev/null || true
+    done
+
+    if ! task rc.verbose=nothing rc.confirmation=off "$id" annotate "note: ${first_line}"; then
+        msg "ERROR: annotation update failed. Note file preserved at: $note_file"
+    fi
+}
+
+note_action() {
+    local id="$1"
+    local inline_text="${2:-}"
+    local note_file
+    note_file=$(get_note_file "$id")
+    mkdir -p "$NOTES_DIR"
+
+    local is_new=true
+    [[ -f "$note_file" ]] && is_new=false
+
+    if [[ ! -t 0 ]]; then
+        # Pipe: create or append
+        local content
+        content="$(cat)"
+        if [[ -z "$content" ]]; then
+            msg "Empty input, nothing saved."
+            return
+        fi
+        if $is_new; then
+            echo "$content" > "$note_file"
+        else
+            echo "" >> "$note_file"
+            echo "$content" >> "$note_file"
+        fi
+        update_note_annotation "$id" "$note_file"
+        msg "Note updated for task $id"
+        return
+    fi
+
+    if [[ -n "$inline_text" ]]; then
+        # Inline: create with template+text, or append to existing
+        if $is_new; then
+            local template
+            template=$(load_template "note")
+            if [[ -n "$template" ]]; then
+                cp "$template" "$note_file"
+                echo "" >> "$note_file"
+            fi
+            echo "$inline_text" >> "$note_file"
+        else
+            echo "" >> "$note_file"
+            echo "$inline_text" >> "$note_file"
+        fi
+        update_note_annotation "$id" "$note_file"
+        msg "Note updated for task $id"
+        return
+    fi
+
+    # Interactive: open note file directly (with template if new)
+    show_task_context "$id"
+    if $is_new; then
+        local template
+        template=$(load_template "note")
+        [[ -n "$template" ]] && cp "$template" "$note_file"
+    fi
+    $EDITOR "$note_file"
+
+    if [[ ! -f "$note_file" || ! -s "$note_file" ]]; then
+        rm -f "$note_file"
+        msg "Empty note, nothing saved."
+        return
+    fi
+
+    update_note_annotation "$id" "$note_file"
+    if $is_new; then
+        msg "Note created: $note_file"
+    else
+        msg "Note updated: $note_file"
+    fi
+}
+
+remove_note() {
+    local id="$1"
+    local note_file
+    note_file=$(get_note_file "$id")
+
+    local desc
+    desc=$(task_get "$id.description")
+    echo "Task $id: $desc"
+    echo "---"
+    if [[ -f "$note_file" ]]; then
+        echo "Note file: $note_file"
+        printf "  %s\n" "$(head -1 "$note_file")"
+    else
+        echo "(No note file at $note_file)"
+    fi
+    echo ""
+
+    read -rp "Remove note annotation and file? [y/N]: " response
+    if [[ "${response,,}" != "y" ]]; then
+        msg "Cancelled."
+        return
+    fi
+
+    local idxs old_text removed=0
+    mapfile -t idxs < <(find_by_label "$id" "note")
+    for idx in "${idxs[@]}"; do
+        old_text=$(task_get "$id.annotations.${idx}.description")
+        if task rc.verbose=nothing rc.confirmation=off "$id" denotate "$old_text" 2>/dev/null; then
+            removed=$(( removed + 1 ))
+        fi
+    done
+    [[ $removed -gt 0 ]] && msg "Note annotation removed from task $id"
+
+    if [[ -f "$note_file" ]]; then
+        rm "$note_file"
+        msg "Note file deleted: $note_file"
     fi
 }
 
@@ -706,7 +876,11 @@ fi
 
 if [[ "$remove_mode" == true ]]; then
     if [[ "$action" == "label" ]]; then
-        remove_by_label "$id" "$ann_label"
+        if [[ "${ann_label,,}" == "note" ]]; then
+            remove_note "$id"
+        else
+            remove_by_label "$id" "$ann_label"
+        fi
     elif ! [[ "$ann_index" =~ ^[0-9]+$ ]]; then
         die "Invalid annotation index: .$ann_index"
     else
@@ -725,7 +899,11 @@ else
             edit_annotation "$id" "$ann_index" "$inline_text"
             ;;
         label)
-            label_action "$id" "$ann_label" "$inline_text"
+            if [[ "${ann_label,,}" == "note" ]]; then
+                note_action "$id" "$inline_text"
+            else
+                label_action "$id" "$ann_label" "$inline_text"
+            fi
             ;;
         new)
             new_annotation "$id" "$inline_text"

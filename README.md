@@ -17,6 +17,8 @@ task completion or deletion.
 - Remove annotations with confirmation
 - Compact dot-syntax: `annn 42.1` to edit, `annn -42.1` to remove
 - Label syntax: `annn 42.status` to edit/create the `status:` annotation
+- Templates: `~/.task/templates/<label>.md` pre-populates the editor
+- Tasknotes: `annn 42.note` opens a persistent file in `~/.task/notes/`
 - Optional hook: auto-prompt for annotation when completing or deleting `+ann` tasks
 - Works standalone or as a tw wrapper: `tw 42 ann.1`
 - Designed for Taskwarrior 2.6.2
@@ -71,6 +73,11 @@ annn -<id>.<N>             Remove annotation N (with confirmation)
 annn -<id>.<label>         Remove annotation by label (with confirmation)
 echo "text" | annn <id>    Annotate from pipe (no editor)
 echo "text" | annn <id>.<label>  Pipe with label prefix
+
+annn <id>.note             Open/create the task's note file in $EDITOR
+annn <id>.note text...     Append inline text to the note (no editor)
+echo "text" | annn <id>.note     Append piped text to the note
+annn -<id>.note            Remove the note annotation and file (with confirmation)
 ```
 
 Space-separated form also works: `annn 42 .1` is the same as `annn 42.1`.
@@ -167,8 +174,7 @@ Labels are entirely optional. Any annotation can have one, none are required,
 and they can be added by `annn` or by any other means. The label is just part
 of the annotation text — no UDAs or extra configuration needed.
 
-**`note:` is reserved** for the tasknotes function and cannot be used as a
-label in `annn`.
+**`note:` is special** — it activates the tasknotes feature (see below).
 
 ### Addressing by label
 
@@ -196,7 +202,7 @@ optional label prompt before opening the editor:
 ```
 
 Press Enter to skip; type a label name to pre-populate the editor with
-`label: `.
+`label: `. Typing `note` at this prompt opens the tasknotes editor instead.
 
 ### List display
 
@@ -218,6 +224,85 @@ annn 42.
 
 ---
 
+## Templates
+
+If `~/.task/templates/<label>.md` exists, `annn` pre-populates the editor with
+that file's content when creating a new labeled annotation interactively.
+
+```bash
+# ~/.task/templates/status.md
+status:
+
+Next actions:
+-
+```
+
+```bash
+annn 42.status    # editor opens with status.md content
+annn 42.link      # no template → editor opens with "link: "
+```
+
+Templates are freeform — include the `label: ` prefix or not, add structure,
+checklists, whatever serves the workflow. The `note:` template lives at
+`~/.task/templates/note.md` and is applied when creating a new tasknote.
+
+Pipe and inline paths are unaffected by templates (no editor is opened).
+
+---
+
+## Tasknotes
+
+The `note:` label is special. Instead of storing content inline in the
+Taskwarrior annotation, `annn 42.note` opens a persistent Markdown file:
+
+```
+~/.task/notes/<task-slug>-<uuid8>.note.md
+```
+
+After the editor closes, `annn` writes a summary annotation to the task:
+
+```
+note: <first line of the note file>
+```
+
+This keeps the task list readable while the full note is always a
+`annn 42.note` away.
+
+### Tasknote examples
+
+```bash
+annn 42.note
+# [annn] Task 42: Fix billing discrepancy (1 annotation)
+# Editor opens ~/.task/notes/fix-billing-discrepancy-a3f9c2b1.note.md
+# [annn] Note created: ~/.task/notes/fix-billing-discrepancy-a3f9c2b1.note.md
+
+annn 42.note
+# (file already exists — editor opens it directly)
+# [annn] Note updated: ~/.task/notes/fix-billing-discrepancy-a3f9c2b1.note.md
+
+echo "see ticket TKT-99" | annn 42.note
+# Appends to the note file, updates annotation
+# [annn] Note updated for task 42
+
+annn 42.note Followed up with vendor
+# Appends inline text to note, updates annotation, no editor
+
+annn -42.note
+# Task 42: Fix billing discrepancy
+# ---
+# Note file: ~/.task/notes/fix-billing-discrepancy-a3f9c2b1.note.md
+#   Followed up with vendor
+#
+# Remove note annotation and file? [y/N]: y
+# [annn] Note annotation removed from task 42
+# [annn] Note file deleted: ~/.task/notes/fix-billing-discrepancy-a3f9c2b1.note.md
+```
+
+The note filename is derived deterministically from the task description and
+UUID — it's always findable from the task ID, even without `annn`.
+
+---
+
 ## tw wrapper usage
 
 When installed via awesome-taskwarrior, all `annn` commands are available
@@ -230,8 +315,11 @@ tw 42 ann.1          # edit annotation 1
 tw 42 -ann.1         # remove annotation 1
 tw 42 ann.status     # edit/create "status:" annotation
 tw 42 -ann.status    # remove "status:" annotation
+tw 42 ann.note       # open/create tasknote
+tw 42 -ann.note      # remove tasknote and file
 echo "note" | tw 42 ann         # pipe input
 echo "url" | tw 42 ann.link     # pipe with label
+echo "detail" | tw 42 ann.note  # append to tasknote
 ```
 
 tw detects the `ann` keyword, translates the arguments, and dispatches to
@@ -297,6 +385,12 @@ cp annn ~/.local/bin/
 chmod +x ~/.local/bin/annn
 ```
 
+Create the notes and templates directories:
+
+```bash
+mkdir -p ~/.task/notes ~/.task/templates
+```
+
 ### Hook
 
 ```bash
@@ -346,7 +440,7 @@ these edge cases gracefully.
 
 ## Metadata
 
-- Version: 0.6.0
+- Version: 0.7.0
 - License: MIT
 - Language: Bash (CLI), Python (hook)
 - Interface: CLI + `$EDITOR`

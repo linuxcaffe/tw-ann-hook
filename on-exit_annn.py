@@ -219,7 +219,8 @@ def save_annotation(task, text):
 
     try:
         result = subprocess.run(
-            ["task", "rc.hooks=off", "rc.confirmation=off", uuid, "annotate", text],
+            ["task", "rc.hooks=off", "rc.confirmation=off", "rc.verbose=nothing",
+             uuid, "annotate", text],
             capture_output=True, text=True
         )
 
